@@ -33,6 +33,7 @@ const App = () => (
             <Route path="/home" element={<Home />} />
             <Route path="/auth" element={<Auth />} />
             <Route path="/auth/setup" element={<AuthSetup />} />
+            <Route path="/onboarding/role" element={<AuthSetup />} />
             <Route path="/report" element={<Report />} />
             <Route path="/public" element={<PublicData />} />
             <Route path="/trust" element={<Trust />} />

@@ -145,3 +145,126 @@ BEGIN
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SET search_path = public;
+
+-- Add missing columns to cases table
+ALTER TABLE public.cases ADD COLUMN IF NOT EXISTS first_action_at TIMESTAMP WITH TIME ZONE;
+
+-- Create case_notes table
+CREATE TABLE IF NOT EXISTS public.case_notes (
+  id UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+  case_id UUID NOT NULL REFERENCES public.cases(id) ON DELETE CASCADE,
+  actor_id UUID NOT NULL REFERENCES public.profiles(id),
+  actor_role public.user_role NOT NULL,
+  action_type public.action_type NOT NULL,
+  note_redacted TEXT,
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
+);
+
+-- Create referrals table
+CREATE TABLE IF NOT EXISTS public.referrals (
+  id UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+  case_id UUID NOT NULL REFERENCES public.cases(id) ON DELETE CASCADE,
+  cpo_id UUID REFERENCES public.profiles(id),
+  ngo_id UUID REFERENCES public.profiles(id),
+  ack_cpo BOOLEAN NOT NULL DEFAULT false,
+  ack_ngo BOOLEAN NOT NULL DEFAULT false,
+  ack_times JSONB,
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+  updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
+);
+
+-- Create audit_log table
+CREATE TABLE IF NOT EXISTS public.audit_log (
+  id BIGSERIAL PRIMARY KEY,
+  case_id UUID REFERENCES public.cases(id) ON DELETE CASCADE,
+  event_json JSONB NOT NULL,
+  prev_hash TEXT,
+  hash TEXT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
+);
+
+-- Enable RLS on new tables
+ALTER TABLE public.case_notes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.referrals ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.audit_log ENABLE ROW LEVEL SECURITY;
+
+-- RLS Policies for case_notes
+CREATE POLICY "Users can view notes for cases they can see" ON public.case_notes FOR SELECT USING (
+  EXISTS (
+    SELECT 1 FROM public.cases 
+    WHERE id = case_notes.case_id 
+    AND (
+      (public.get_user_role(auth.uid()) IN ('teacher', 'guardian') AND school_id = public.get_user_school(auth.uid()))
+      OR (public.get_user_role(auth.uid()) IN ('cpo', 'ngo') AND county_id = public.get_user_county(auth.uid()))
+      OR (public.get_user_role(auth.uid()) = 'admin')
+    )
+  )
+);
+CREATE POLICY "Officers can create case notes" ON public.case_notes FOR INSERT WITH CHECK (
+  public.get_user_role(auth.uid()) IN ('cpo', 'ngo', 'admin')
+);
+
+-- RLS Policies for referrals
+CREATE POLICY "Users can view referrals for cases they can see" ON public.referrals FOR SELECT USING (
+  EXISTS (
+    SELECT 1 FROM public.cases 
+    WHERE id = referrals.case_id 
+    AND (
+      (public.get_user_role(auth.uid()) IN ('teacher', 'guardian') AND school_id = public.get_user_school(auth.uid()))
+      OR (public.get_user_role(auth.uid()) IN ('cpo', 'ngo') AND county_id = public.get_user_county(auth.uid()))
+      OR (public.get_user_role(auth.uid()) = 'admin')
+    )
+  )
+);
+CREATE POLICY "Officers can manage referrals" ON public.referrals FOR ALL USING (
+  public.get_user_role(auth.uid()) IN ('cpo', 'ngo', 'admin')
+);
+
+-- RLS Policies for audit_log
+CREATE POLICY "Users can view audit logs for cases they can see" ON public.audit_log FOR SELECT USING (
+  EXISTS (
+    SELECT 1 FROM public.cases 
+    WHERE id = audit_log.case_id 
+    AND (
+      (public.get_user_role(auth.uid()) IN ('teacher', 'guardian') AND school_id = public.get_user_school(auth.uid()))
+      OR (public.get_user_role(auth.uid()) IN ('cpo', 'ngo') AND county_id = public.get_user_county(auth.uid()))
+      OR (public.get_user_role(auth.uid()) = 'admin')
+    )
+  )
+);
+CREATE POLICY "System can create audit logs" ON public.audit_log FOR INSERT WITH CHECK (true);
+
+-- Create county_stats view
+CREATE OR REPLACE VIEW public.county_stats AS
+SELECT
+  c.name as county_name,
+  c.code as county_code,
+  COUNT(*) FILTER (WHERE cases.created_at >= NOW() - INTERVAL '7 days') as new_this_week,
+  ROUND(100.0 * AVG(
+    CASE 
+      WHEN LEAST(COALESCE(cases.cpo_acked_at, NOW()), COALESCE(cases.ngo_acked_at, NOW())) - cases.created_at <= INTERVAL '4 hours' 
+      THEN 1 
+      ELSE 0 
+    END
+  ), 1) as ack_under_4h_percent,
+  ROUND(100.0 * AVG(
+    CASE 
+      WHEN COALESCE(cases.first_action_at, NOW()) - cases.created_at <= INTERVAL '24 hours' 
+      THEN 1 
+      ELSE 0 
+    END
+  ), 1) as first_action_under_24h_percent,
+  COUNT(*) FILTER (WHERE cases.status = 'in_progress') as in_progress,
+  COUNT(*) FILTER (WHERE cases.status = 'closed') as closed_this_month
+FROM public.counties c
+LEFT JOIN public.cases ON c.id = cases.county_id
+GROUP BY c.id, c.name, c.code;
+
+-- Grant access to county_stats view
+GRANT SELECT ON public.county_stats TO authenticated;
+GRANT SELECT ON public.county_stats TO anon;
+
+-- Create triggers for new tables
+CREATE TRIGGER update_referrals_updated_at
+  BEFORE UPDATE ON public.referrals
+  FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();

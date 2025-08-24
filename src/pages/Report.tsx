@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -11,8 +11,12 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Shield, AlertTriangle, Lock, Eye, EyeOff, ArrowRight, Phone, Clock } from 'lucide-react';
 import { redactText, hasRedactions, getRedactionSummary } from '@/lib/redaction';
+import { rateLimit, rankAlert, generateCaseCode } from '@/lib/utils';
+import { useAuth } from '@/hooks/useAuth';
+import { supabase } from '@/integrations/supabase/client';
 
 export default function Report() {
+  const { user } = useAuth();
   const [formData, setFormData] = useState({
     ageBand: '',
     county: '',
@@ -24,6 +28,8 @@ export default function Report() {
   const [showRedactionPreview, setShowRedactionPreview] = useState(false);
   const [showCaseCode, setShowCaseCode] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [rateLimitInfo, setRateLimitInfo] = useState<any>(null);
+  const [rateLimitError, setRateLimitError] = useState<string>('');
 
   const riskTagOptions = [
     { id: 'pressure_at_home', label: 'Pressure from family/home' },
@@ -42,6 +48,26 @@ export default function Report() {
   const redactedNote = formData.note ? redactText(formData.note) : '';
   const hasRedactedContent = hasRedactions(formData.note, redactedNote);
 
+  // Check rate limit on component mount and when user changes
+  useEffect(() => {
+    if (user) {
+      checkRateLimit();
+    }
+  }, [user]);
+
+  const checkRateLimit = async () => {
+    if (!user) return;
+    
+    try {
+      const rateLimitResult = await rateLimit(user.id);
+      setRateLimitInfo(rateLimitResult);
+      setRateLimitError('');
+    } catch (error) {
+      console.error('Rate limit check failed:', error);
+      setRateLimitError('Unable to check rate limit');
+    }
+  };
+
   const handleRiskTagChange = (tagId: string, checked: boolean) => {
     setFormData(prev => ({
       ...prev,
@@ -56,16 +82,75 @@ export default function Report() {
   };
 
   const handleSubmit = async () => {
+    if (!user) {
+      alert('Please log in to submit a report');
+      return;
+    }
+
+    // Check rate limit again before submitting
+    const rateLimitResult = await rateLimit(user.id);
+    if (!rateLimitResult.allowed) {
+      setRateLimitError(rateLimitResult.reason || 'Rate limit exceeded');
+      return;
+    }
+
     setIsSubmitting(true);
     
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    // Generate case code (would be done by backend)
-    const caseCode = `SG-${formData.county.substring(0, 3).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
-    
-    setIsSubmitting(false);
-    setShowCaseCode(true);
+    try {
+      // Calculate risk score
+      const riskAssessment = rankAlert({
+        ageBand: formData.ageBand,
+        riskTags: formData.riskTags,
+        redactedNote: redactedNote
+      });
+
+      // Generate case code
+      const caseCode = generateCaseCode(formData.county.substring(0, 3).toUpperCase());
+
+      // Get user profile for school_id
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('id, school_id, county_id')
+        .eq('user_id', user.id)
+        .single();
+
+      if (!profile) {
+        throw new Error('User profile not found');
+      }
+
+      // Create case (this would be done with proper server functions in production)
+      const { error: caseError } = await supabase
+        .from('cases')
+        .insert({
+          case_code: caseCode,
+          reporter_id: profile.id,
+          age_band: formData.ageBand as '10-12' | '13-15' | '16-17',
+          county_id: profile.county_id,
+          school_id: profile.school_id,
+          risk_tags: formData.riskTags,
+          redacted_note: redactedNote,
+          risk_score: riskAssessment.score,
+          status: 'new'
+        });
+
+      if (caseError) throw caseError;
+
+      // Update rate limit
+      await supabase
+        .from('user_rate_limits')
+        .upsert({
+          user_id: profile.id,
+          alerts_today: (rateLimitResult.alertsToday || 0) + 1,
+          last_alert_at: new Date().toISOString()
+        });
+
+      setIsSubmitting(false);
+      setShowCaseCode(true);
+    } catch (error) {
+      console.error('Failed to submit report:', error);
+      setIsSubmitting(false);
+      alert('Failed to submit report. Please try again.');
+    }
   };
 
   if (showCaseCode) {
@@ -175,6 +260,27 @@ export default function Report() {
             </div>
           </div>
         </div>
+
+        {/* Rate Limit Error */}
+        {rateLimitError && (
+          <Alert className="mb-6 border-destructive/20 bg-destructive/5">
+            <AlertTriangle className="h-4 w-4 text-destructive" />
+            <AlertDescription className="text-destructive">
+              <strong>Rate Limit:</strong> {rateLimitError}
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {/* Rate Limit Info */}
+        {rateLimitInfo && !rateLimitError && (
+          <Alert className="mb-6 border-blue-200 bg-blue-50">
+            <Clock className="h-4 w-4 text-blue-600" />
+            <AlertDescription className="text-blue-800">
+              <strong>Rate Limit:</strong> {rateLimitInfo.alertsToday}/3 reports today. 
+              {rateLimitInfo.nextAllowedAt && ` Next allowed at ${rateLimitInfo.nextAllowedAt.toLocaleTimeString()}`}
+            </AlertDescription>
+          </Alert>
+        )}
 
         <div className="grid lg:grid-cols-3 gap-6">
           {/* Main Form */}

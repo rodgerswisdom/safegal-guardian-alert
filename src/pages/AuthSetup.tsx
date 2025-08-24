@@ -1,276 +1,324 @@
 import { useState } from 'react';
-import { Navigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Shield, Users, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Separator } from '@/components/ui/separator';
+import { Shield, Users, FileText, AlertTriangle, Clock, CheckCircle2 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
-import { useProfile, useCreateProfile } from '@/hooks/useProfile';
-import { useToast } from '@/hooks/use-toast';
+import { useProfile } from '@/hooks/useProfile';
 import { supabase } from '@/integrations/supabase/client';
-import type { Database } from '@/integrations/supabase/types';
-
-type UserRole = Database['public']['Enums']['user_role'];
+import { getAvailableRoles, getDisplayName, getDescription } from '@/lib/auth/roles';
+import { getLandingPage } from '@/lib/auth/roles';
 
 export default function AuthSetup() {
   const { user } = useAuth();
-  const { data: profile, isLoading: profileLoading } = useProfile();
-  const { toast } = useToast();
-  const createProfile = useCreateProfile();
-  
-  const [role, setRole] = useState<UserRole | ''>('');
-  const [countyId, setCountyId] = useState('');
-  const [schoolId, setSchoolId] = useState('');
+  const { data: profile, refetch: refetchProfile } = useProfile();
+  const navigate = useNavigate();
+  const [selectedRole, setSelectedRole] = useState<string>('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string>('');
 
-  // Fetch counties and schools
-  const { data: counties } = useQuery({
-    queryKey: ['counties'],
-    queryFn: async () => {
-      const { data, error } = await supabase.from('counties').select('*').order('name');
-      if (error) throw error;
-      return data;
-    },
-  });
+  const availableRoles = getAvailableRoles();
 
-  const { data: schools } = useQuery({
-    queryKey: ['schools', countyId],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('schools')
-        .select('*')
-        .eq('county_id', countyId)
-        .order('name');
-      if (error) throw error;
-      return data;
-    },
-    enabled: !!countyId,
-  });
-
-  // Redirect if already has profile
-  if (profile && !profileLoading) {
-    return <Navigate to="/" replace />;
+  // If user already has a role, redirect to appropriate page
+  if (profile?.role) {
+    const landingPage = getLandingPage(profile.role);
+    navigate(landingPage);
+    return null;
   }
 
-  // Redirect if not authenticated
-  if (!user) {
-    return <Navigate to="/auth" replace />;
-  }
+  const handleRoleSelect = async (role: string) => {
+    if (!user) return;
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!role) {
-      toast({
-        variant: 'destructive',
-        title: 'Please select a role',
-      });
-      return;
-    }
-
-    // Validate required fields based on role
-    if ((role === 'teacher' || role === 'guardian') && !schoolId) {
-      toast({
-        variant: 'destructive',
-        title: 'Please select your school',
-      });
-      return;
-    }
-
-    if ((role === 'cpo' || role === 'ngo') && !countyId) {
-      toast({
-        variant: 'destructive',
-        title: 'Please select your county',
-      });
-      return;
-    }
+    setIsSubmitting(true);
+    setError('');
 
     try {
-      await createProfile.mutateAsync({
-        role: role as UserRole,
-        county_id: countyId || undefined,
-        school_id: schoolId || undefined,
-      });
+      // Check if user already has a profile
+      const { data: existingProfile } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('user_id', user.id)
+        .single();
 
-      toast({
-        title: 'Profile Created',
-        description: role === 'teacher' || role === 'guardian' 
-          ? 'You can now file reports.'
-          : 'Your account is pending admin approval.',
-      });
-    } catch (error: any) {
-      toast({
-        variant: 'destructive',
-        title: 'Failed to create profile',
-        description: error.message || 'An error occurred',
-      });
+      if (existingProfile) {
+        // Update existing profile
+        const { error: updateError } = await supabase
+          .from('profiles')
+          .update({ 
+            role: role as any,
+            approved: role === 'teacher' || role === 'guardian' // Auto-approve reporters
+          })
+          .eq('user_id', user.id);
+
+        if (updateError) throw updateError;
+      } else {
+        // Create new profile
+        const { error: insertError } = await supabase
+          .from('profiles')
+          .insert({
+            user_id: user.id,
+            role: role as any,
+            approved: role === 'teacher' || role === 'guardian' // Auto-approve reporters
+          });
+
+        if (insertError) throw insertError;
+      }
+
+      // Refetch profile to get updated data
+      await refetchProfile();
+
+      // Redirect based on role
+      if (role === 'teacher' || role === 'guardian') {
+        navigate('/report');
+      } else {
+        // For officers, show pending approval message
+        setSelectedRole(role);
+      }
+
+    } catch (err) {
+      console.error('Error setting role:', err);
+      setError('Failed to set role. Please try again.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
+  // Show pending approval for officers
+  if (selectedRole && (selectedRole === 'cpo' || selectedRole === 'ngo')) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-warning/5 via-background to-primary/5 p-4">
+        <div className="container mx-auto max-w-2xl py-12">
+          <Card className="border-warning/20">
+            <CardHeader className="text-center">
+              <div className="mx-auto h-16 w-16 bg-warning/10 rounded-full flex items-center justify-center mb-4">
+                <Clock className="h-8 w-8 text-warning" />
+              </div>
+              <CardTitle className="text-2xl text-warning">Pending Approval</CardTitle>
+              <CardDescription>
+                Your account is awaiting administrative approval
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="text-center space-y-2">
+                <Badge variant="outline" className="text-lg px-4 py-2">
+                  {getDisplayName(selectedRole as any)}
+                </Badge>
+                <p className="text-muted-foreground">
+                  You've been registered as a {getDisplayName(selectedRole as any).toLowerCase()}. 
+                  An administrator will review and approve your account shortly.
+                </p>
+              </div>
+
+              <Separator />
+
+              <div className="space-y-4">
+                <h3 className="font-semibold">What happens next?</h3>
+                <div className="space-y-3 text-sm">
+                  <div className="flex items-center space-x-3">
+                    <div className="h-6 w-6 bg-primary text-primary-foreground rounded-full flex items-center justify-center text-xs font-bold">1</div>
+                    <span>Administrator reviews your account</span>
+                  </div>
+                  <div className="flex items-center space-x-3">
+                    <div className="h-6 w-6 bg-primary text-primary-foreground rounded-full flex items-center justify-center text-xs font-bold">2</div>
+                    <span>County assignment is configured</span>
+                  </div>
+                  <div className="flex items-center space-x-3">
+                    <div className="h-6 w-6 bg-primary text-primary-foreground rounded-full flex items-center justify-center text-xs font-bold">3</div>
+                    <span>You'll receive access to the officer dashboard</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-muted/50 p-4 rounded-lg">
+                <p className="text-sm text-muted-foreground">
+                  <strong>Note:</strong> You can still access public information while waiting for approval. 
+                  Check back later or contact your administrator for status updates.
+                </p>
+              </div>
+
+              <div className="flex gap-3">
+                <Button 
+                  variant="outline" 
+                  onClick={() => navigate('/')}
+                  className="flex-1"
+                >
+                  Return Home
+                </Button>
+                <Button 
+                  onClick={() => navigate('/public')}
+                  className="flex-1"
+                >
+                  View County Stats
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary/5 via-background to-secondary/5 p-4">
-      <div className="w-full max-w-2xl space-y-6">
-        {/* Header */}
-        <div className="text-center space-y-4">
-          <div className="flex items-center justify-center">
-            <Shield className="h-10 w-10 text-primary mr-2" />
-            <h1 className="text-3xl font-bold">Complete Your Profile</h1>
+    <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-secondary/5 p-4">
+      <div className="container mx-auto max-w-4xl py-12">
+        <div className="text-center mb-8">
+          <div className="flex items-center justify-center mb-4">
+            <Shield className="h-12 w-12 text-primary mr-3" />
+            <h1 className="text-3xl font-bold">Welcome to Safegal</h1>
           </div>
-          <p className="text-muted-foreground">
-            Tell us about your role to set up appropriate access and permissions
+          <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
+            Please select your role to complete your account setup. This helps us provide you with the appropriate tools and permissions.
           </p>
         </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Role & Location Setup</CardTitle>
-            <CardDescription>
-              This information determines your access level and case visibility
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleSubmit} className="space-y-6">
-              {/* Role Selection */}
-              <div className="space-y-4">
-                <Label className="text-base font-medium">What is your role?</Label>
-                <RadioGroup value={role} onValueChange={(value) => setRole(value as UserRole)}>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="flex items-center space-x-2 p-4 border rounded-lg hover:bg-muted/50">
-                      <RadioGroupItem value="teacher" id="teacher" />
-                      <div className="flex-1">
-                        <Label htmlFor="teacher" className="font-medium cursor-pointer">
-                          Teacher
-                        </Label>
-                        <p className="text-sm text-muted-foreground">
-                          School staff reporting student risk
-                        </p>
-                      </div>
-                      <Users className="h-5 w-5 text-primary" />
-                    </div>
-                    
-                    <div className="flex items-center space-x-2 p-4 border rounded-lg hover:bg-muted/50">
-                      <RadioGroupItem value="guardian" id="guardian" />
-                      <div className="flex-1">
-                        <Label htmlFor="guardian" className="font-medium cursor-pointer">
-                          Guardian/Parent
-                        </Label>
-                        <p className="text-sm text-muted-foreground">
-                          Parent or guardian reporting concerns
-                        </p>
-                      </div>
-                      <Shield className="h-5 w-5 text-secondary" />
-                    </div>
-                    
-                    <div className="flex items-center space-x-2 p-4 border rounded-lg hover:bg-muted/50">
-                      <RadioGroupItem value="cpo" id="cpo" />
-                      <div className="flex-1">
-                        <Label htmlFor="cpo" className="font-medium cursor-pointer">
-                          Child Protection Officer
-                        </Label>
-                        <p className="text-sm text-muted-foreground">
-                          County CPO handling cases
-                        </p>
-                      </div>
-                      <AlertTriangle className="h-5 w-5 text-accent" />
-                    </div>
-                    
-                    <div className="flex items-center space-x-2 p-4 border rounded-lg hover:bg-muted/50">
-                      <RadioGroupItem value="ngo" id="ngo" />
-                      <div className="flex-1">
-                        <Label htmlFor="ngo" className="font-medium cursor-pointer">
-                          NGO Officer
-                        </Label>
-                        <p className="text-sm text-muted-foreground">
-                          NGO staff supporting cases
-                        </p>
-                      </div>
-                      <CheckCircle2 className="h-5 w-5 text-success" />
-                    </div>
+        {error && (
+          <Alert variant="destructive" className="mb-6">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {availableRoles.map((role) => (
+            <Card 
+              key={role.value}
+              className={`cursor-pointer transition-all hover:shadow-lg ${
+                selectedRole === role.value ? 'ring-2 ring-primary' : ''
+              }`}
+              onClick={() => setSelectedRole(role.value)}
+            >
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    {role.value === 'teacher' && <FileText className="h-5 w-5 text-blue-500" />}
+                    {role.value === 'guardian' && <Shield className="h-5 w-5 text-green-500" />}
+                    {role.value === 'cpo' && <AlertTriangle className="h-5 w-5 text-orange-500" />}
+                    {role.value === 'ngo' && <Users className="h-5 w-5 text-purple-500" />}
+                    {role.value === 'admin' && <Shield className="h-5 w-5 text-red-500" />}
+                    <CardTitle className="text-lg">{role.label}</CardTitle>
                   </div>
-                </RadioGroup>
-              </div>
-
-              {/* County Selection (for CPO/NGO) */}
-              {(role === 'cpo' || role === 'ngo') && (
-                <div className="space-y-2">
-                  <Label htmlFor="county">County</Label>
-                  <Select value={countyId} onValueChange={setCountyId}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select your county" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {counties?.map((county) => (
-                        <SelectItem key={county.id} value={county.id}>
-                          {county.name} ({county.code})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
-
-              {/* School Selection (for Teachers/Guardians) */}
-              {(role === 'teacher' || role === 'guardian') && (
-                <>
-                  <div className="space-y-2">
-                    <Label htmlFor="county">County</Label>
-                    <Select value={countyId} onValueChange={setCountyId}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select the county" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {counties?.map((county) => (
-                          <SelectItem key={county.id} value={county.id}>
-                            {county.name} ({county.code})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {countyId && (
-                    <div className="space-y-2">
-                      <Label htmlFor="school">School</Label>
-                      <Select value={schoolId} onValueChange={setSchoolId}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select the school" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {schools?.map((school) => (
-                            <SelectItem key={school.id} value={school.id}>
-                              {school.name} ({school.code})
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
+                  {role.value === 'teacher' || role.value === 'guardian' ? (
+                    <Badge variant="secondary" className="text-xs">Auto-approved</Badge>
+                  ) : (
+                    <Badge variant="outline" className="text-xs">Admin approval</Badge>
                   )}
-                </>
-              )}
+                </div>
+              </CardHeader>
+              <CardContent>
+                <CardDescription className="mb-4">
+                  {role.description}
+                </CardDescription>
+                
+                <div className="space-y-2 text-sm">
+                  {role.value === 'teacher' && (
+                    <>
+                      <div className="flex items-center space-x-2">
+                        <CheckCircle2 className="h-4 w-4 text-green-500" />
+                        <span>Report incidents from your school</span>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <CheckCircle2 className="h-4 w-4 text-green-500" />
+                        <span>Track case status updates</span>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <CheckCircle2 className="h-4 w-4 text-green-500" />
+                        <span>Access to school-specific data</span>
+                      </div>
+                    </>
+                  )}
+                  
+                  {role.value === 'guardian' && (
+                    <>
+                      <div className="flex items-center space-x-2">
+                        <CheckCircle2 className="h-4 w-4 text-green-500" />
+                        <span>Report concerns anonymously</span>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <CheckCircle2 className="h-4 w-4 text-green-500" />
+                        <span>Receive case reference codes</span>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <CheckCircle2 className="h-4 w-4 text-green-500" />
+                        <span>Privacy-first reporting</span>
+                      </div>
+                    </>
+                  )}
+                  
+                  {(role.value === 'cpo' || role.value === 'ngo') && (
+                    <>
+                      <div className="flex items-center space-x-2">
+                        <CheckCircle2 className="h-4 w-4 text-green-500" />
+                        <span>Respond to cases in your county</span>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <CheckCircle2 className="h-4 w-4 text-green-500" />
+                        <span>Manage case workflow</span>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <CheckCircle2 className="h-4 w-4 text-green-500" />
+                        <span>Coordinate with other officers</span>
+                      </div>
+                    </>
+                  )}
+                  
+                  {role.value === 'admin' && (
+                    <>
+                      <div className="flex items-center space-x-2">
+                        <CheckCircle2 className="h-4 w-4 text-green-500" />
+                        <span>Manage user accounts</span>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <CheckCircle2 className="h-4 w-4 text-green-500" />
+                        <span>Configure system settings</span>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <CheckCircle2 className="h-4 w-4 text-green-500" />
+                        <span>Access all data and reports</span>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
 
-              {/* Approval Notice */}
-              {(role === 'cpo' || role === 'ngo') && (
-                <Alert>
-                  <AlertTriangle className="h-4 w-4" />
-                  <AlertDescription>
-                    Officer accounts require admin approval. You will receive an email notification once your account is activated.
-                  </AlertDescription>
-                </Alert>
-              )}
+        <div className="mt-8 text-center">
+          <Button 
+            size="lg" 
+            onClick={() => handleRoleSelect(selectedRole)}
+            disabled={!selectedRole || isSubmitting}
+            className="px-8"
+          >
+            {isSubmitting ? 'Setting up...' : 'Continue'}
+          </Button>
+          
+          <div className="mt-4">
+            <Button 
+              variant="ghost" 
+              onClick={() => navigate('/')}
+              disabled={isSubmitting}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
 
-              <Button 
-                type="submit" 
-                className="w-full" 
-                disabled={createProfile.isPending}
-              >
-                {createProfile.isPending ? 'Creating Profile...' : 'Complete Setup'}
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
+        <div className="mt-12 bg-muted/50 p-6 rounded-lg">
+          <h3 className="font-semibold mb-3">About Safegal</h3>
+          <div className="grid md:grid-cols-2 gap-4 text-sm text-muted-foreground">
+            <div>
+              <h4 className="font-medium mb-2">Privacy First</h4>
+              <p>We never store names or phone numbers. All reports are automatically redacted to protect privacy.</p>
+            </div>
+            <div>
+              <h4 className="font-medium mb-2">Secure & Anonymous</h4>
+              <p>Your identity is protected. Reports are handled confidentially by authorized officers only.</p>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
