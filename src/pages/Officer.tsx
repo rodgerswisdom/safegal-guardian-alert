@@ -22,6 +22,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { supabase } from '@/integrations/supabase/client';
 import { formatTimeAgo, getRiskLevelColor, getRiskLevelText } from '@/lib/utils';
+import LogoutButton from '@/components/LogoutButton';
 
 interface Case {
   id: string;
@@ -64,7 +65,7 @@ export default function Officer() {
   const queueCases = cases?.filter(c => c.status === 'new') || [];
   const inProgressCases = cases?.filter(c => c.status === 'acknowledged' || c.status === 'in_progress') || [];
   const closedCases = cases?.filter(c => c.status === 'closed' || c.status === 'unfounded') || [];
-  const reviewCases = cases?.filter(c => c.status === 'review') || [];
+  const reviewCases = cases?.filter(c => c.status === 'unfounded') || []; // Using unfounded as review cases for now
 
   const handleAction = async (caseId: string, action: string) => {
     // This would be implemented with proper server functions
@@ -112,9 +113,12 @@ export default function Officer() {
                 Welcome back, {profile?.role === 'cpo' ? 'Child Protection Officer' : 'NGO Officer'}
               </p>
             </div>
-            <Badge variant="outline" className="text-sm">
-              {profile?.county_id ? 'County: ' + profile.county_id : 'County not assigned'}
-            </Badge>
+            <div className="flex items-center space-x-4">
+              <Badge variant="outline" className="text-sm">
+                {profile?.county_id ? 'County: ' + profile.county_id : 'County not assigned'}
+              </Badge>
+              <LogoutButton variant="ghost" size="sm" />
+            </div>
           </div>
         </div>
 

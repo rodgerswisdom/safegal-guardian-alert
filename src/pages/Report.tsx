@@ -14,6 +14,7 @@ import { redactText, hasRedactions, getRedactionSummary } from '@/lib/redaction'
 import { rateLimit, rankAlert, generateCaseCode } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
+import LogoutButton from '@/components/LogoutButton';
 
 export default function Report() {
   const { user } = useAuth();
@@ -258,6 +259,7 @@ export default function Report() {
               <Shield className="h-4 w-4" />
               <span>Secure Audit Trail</span>
             </div>
+            <LogoutButton variant="ghost" size="sm" />
           </div>
         </div>
 

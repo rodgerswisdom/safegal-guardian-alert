@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProviderWrapper } from "@/components/AuthProvider";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
+import Navigation from "@/components/Navigation";
 
 // Pages
 import Index from "./pages/Index";
@@ -28,38 +29,41 @@ const App = () => (
         <Toaster />
         <Sonner />
         <BrowserRouter>
-          <Routes>
-            <Route path="/" element={<Index />} />
-            <Route path="/home" element={<Home />} />
-            <Route path="/auth" element={<Auth />} />
-            <Route path="/auth/setup" element={<AuthSetup />} />
-            <Route path="/onboarding/role" element={<AuthSetup />} />
-            <Route path="/report" element={<Report />} />
-            <Route path="/public" element={<PublicData />} />
-            <Route path="/trust" element={<Trust />} />
-            <Route path="/learn" element={<Learn />} />
-            
-            {/* Protected Routes */}
-            <Route 
-              path="/officer" 
-              element={
-                <ProtectedRoute requiredRoles={['cpo', 'ngo', 'admin']}>
-                  <Officer />
-                </ProtectedRoute>
-              } 
-            />
-            <Route 
-              path="/admin" 
-              element={
-                <ProtectedRoute requiredRoles={['admin']}>
-                  <Admin />
-                </ProtectedRoute>
-              } 
-            />
-            
-            {/* Catch-all route */}
-            <Route path="*" element={<NotFound />} />
-          </Routes>
+          <div className="min-h-screen">
+            <Navigation />
+            <Routes>
+              <Route path="/" element={<Index />} />
+              <Route path="/home" element={<Home />} />
+              <Route path="/auth" element={<Auth />} />
+              <Route path="/auth/setup" element={<AuthSetup />} />
+              <Route path="/onboarding/role" element={<AuthSetup />} />
+              <Route path="/report" element={<Report />} />
+              <Route path="/public" element={<PublicData />} />
+              <Route path="/trust" element={<Trust />} />
+              <Route path="/learn" element={<Learn />} />
+              
+              {/* Protected Routes */}
+              <Route 
+                path="/officer" 
+                element={
+                  <ProtectedRoute requiredRoles={['cpo', 'ngo', 'admin']}>
+                    <Officer />
+                  </ProtectedRoute>
+                } 
+              />
+              <Route 
+                path="/admin" 
+                element={
+                  <ProtectedRoute requiredRoles={['admin']}>
+                    <Admin />
+                  </ProtectedRoute>
+                } 
+              />
+              
+              {/* Catch-all route */}
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </div>
         </BrowserRouter>
       </TooltipProvider>
     </AuthProviderWrapper>

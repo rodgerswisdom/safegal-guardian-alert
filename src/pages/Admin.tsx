@@ -16,12 +16,12 @@ import {
   Settings,
   Activity,
   FileText,
-  AlertTriangle,
-  Map
+  AlertTriangle
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { supabase } from '@/integrations/supabase/client';
+import LogoutButton from '@/components/LogoutButton';
 
 interface PendingUser {
   id: string;
@@ -135,9 +135,12 @@ export default function Admin() {
                 System administration and user management
               </p>
             </div>
-            <Badge variant="outline" className="text-sm">
-              Administrator
-            </Badge>
+            <div className="flex items-center space-x-4">
+              <Badge variant="outline" className="text-sm">
+                Administrator
+              </Badge>
+              <LogoutButton variant="ghost" size="sm" />
+            </div>
           </div>
         </div>
 
