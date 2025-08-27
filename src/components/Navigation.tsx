@@ -19,7 +19,8 @@ import {
   Settings,
   Home,
   BookOpen,
-  Lock
+  Lock,
+  Clipboard
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
@@ -67,6 +68,10 @@ export default function Navigation() {
                 <Link to="/learn" className="flex items-center space-x-1 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
                   <BookOpen className="h-4 w-4" />
                   <span>Learn</span>
+                </Link>
+                <Link to="/report" className="flex items-center space-x-1 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
+                  <Clipboard className="h-4 w-4" />
+                  <span>Report</span>
                 </Link>
                 <Link to="/auth">
                   <Button variant="outline" size="sm">

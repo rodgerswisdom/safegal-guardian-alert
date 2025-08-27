@@ -1,0 +1,39 @@
+1. Safegal
+
+- an app that lets a teacher or a guardian silently report that a girl is ar risk of FGM.
+
+- Responders:
+    1. County child protection officer - CPO
+    2. patner NGOs
+
+- alert is sent to responders
+
+- system gives a case code
+
+- system hides names.
+
+- responders/officer logs what they did towards a particular case.
+
+
+- public can see county response stats
+
+- no personal details is displayed.
+
+
+
+Stats
+............................
+ 
+ - In Tharaka nithi, 71% of women had undergone FGM in 2022(UNFPA Kenya, 2022)
+
+-  In KDHS 2022 data, FGM prevalence is 56.3% among women with no education beyond secondary
+
+
+- FGM has been outlawed nationwide.
+
+Software Specification
+............................................................
+- report
+- stats
+- case masking
+- 
