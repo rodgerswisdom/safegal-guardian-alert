@@ -37,8 +37,8 @@ export default function Auth() {
           });
         } else {
           toast({
-            title: 'Check Your Email',
-            description: 'We sent you a confirmation link to complete your registration.',
+            title: 'Account Created',
+            description: 'Welcome to Safegal! You are now signed in.',
           });
         }
       } else {
